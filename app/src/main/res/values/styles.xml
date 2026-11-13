@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pd_bg">#14171C</color>
+    <color name="pd_accent">#2EC4B6</color>
+    <color name="icon_bg">#12303A</color>
+
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/pd_bg</item>
+        <item name="android:colorPrimaryDark">@color/pd_bg</item>
+        <item name="android:colorAccent">@color/pd_accent</item>
+        <item name="android:windowBackground">@color/pd_bg</item>
+        <item name="android:statusBarColor">@color/pd_bg</item>
+        <item name="android:navigationBarColor">@color/pd_bg</item>
+    </style>
+</resources>

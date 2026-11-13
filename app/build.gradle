@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.printdrop.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.printdrop.app'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // A fixed key kept in the project, so every new build installs over the previous one.
+    signingConfigs {
+        printdrop {
+            storeFile file('printdrop.keystore')
+            storePassword 'printdrop'
+            keyAlias 'printdrop'
+            keyPassword 'printdrop'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.printdrop
+        }
+        release {
+            signingConfig signingConfigs.printdrop
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

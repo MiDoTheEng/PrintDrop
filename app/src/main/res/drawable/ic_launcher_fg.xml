@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- a printer: paper in, body, paper out with a drop on it -->
+    <path android:fillColor="#F4F6FA" android:pathData="M40,32h28v14h-28z" />
+    <path android:fillColor="#2EC4B6" android:pathData="M33,45h42a4,4 0,0 1,4 4v17a4,4 0,0 1,-4 4h-42a4,4 0,0 1,-4 -4v-17a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#12303A" android:pathData="M68,50h5v3h-5z" />
+    <path android:fillColor="#F4F6FA" android:pathData="M40,59h28v19h-28z" />
+    <path android:fillColor="#2EC4B6" android:pathData="M54,62c3,4 5,6.5 5,9a5,5 0,0 1,-10 0c0,-2.5 2,-5 5,-9z" />
+</vector>
