@@ -286,6 +286,7 @@ final class Ipp {
             p.clearCaps();
         }
         p.rawPort = open(p.host, 9100, 1500) ? 9100 : 0;
+        if (p.model.isEmpty() && (found || p.rawPort > 0)) p.model = Snmp.model(p.host);
         p.probed = true;
     }
 

@@ -37,7 +37,7 @@ final class Printer {
     String title() {
         if (!model.isEmpty()) return model;
         if (!name.isEmpty()) return name;
-        return host;
+        return "Printer";
     }
 
     /** One line saying how the app will talk to this printer. */
@@ -70,7 +70,7 @@ final class Printer {
     }
 
     String save() {
-        return name.replace('|', ' ') + "|" + host + "|" + ippPort + "|" + ippPath + "|" + rawPort;
+        return title().replace('|', ' ') + "|" + host + "|" + ippPort + "|" + ippPath + "|" + rawPort;
     }
 
     static Printer load(String s) {

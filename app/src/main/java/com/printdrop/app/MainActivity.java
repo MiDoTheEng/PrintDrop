@@ -249,7 +249,7 @@ public class MainActivity extends Activity {
             printerName.setText("No printer yet");
             printerInfo.setText("Tap Find printers while on the same Wi-Fi as the printer.");
         } else {
-            printerName.setText(printer.title());
+            printerName.setText(printer.title() + "  ·  " + printer.host);
             printerInfo.setText(printer.summary());
         }
         if (pageCount == 0) {
@@ -316,7 +316,7 @@ public class MainActivity extends Activity {
             shown.clear();
             shown.addAll(printers);
             adapter.clear();
-            for (Printer p : printers) adapter.add(p.title() + "\n" + p.host);
+            for (Printer p : printers) adapter.add(p.title() + "  ·  " + p.host);
             adapter.notifyDataSetChanged();
             if (looking) dialog.setTitle("Looking for printers…");
             else dialog.setTitle(printers.isEmpty() ? "No printers found" : "Choose a printer");
