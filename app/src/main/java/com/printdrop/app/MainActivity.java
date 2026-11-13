@@ -45,6 +45,8 @@ public class MainActivity extends Activity {
     private int pageCount;
     private String pageSpec = "";           // "" = all pages
     private Paper paper = Paper.A4;
+    private boolean autoPaper = true;       // match each page's own size
+    private String docSizes = "";
     private int copies = 1, sides, sendAs;
     private boolean colour = true;
     private PrintJob running;
@@ -56,7 +58,9 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         prefs = getSharedPreferences("printdrop", MODE_PRIVATE);
         printer = Printer.load(prefs.getString("printer", null));
-        paper = Paper.byLabel(prefs.getString("paper", "A4"));
+        String savedPaper = prefs.getString("paper", "Auto");
+        autoPaper = savedPaper.equals("Auto");
+        paper = Paper.byLabel(savedPaper);
         colour = prefs.getBoolean("colour", true);
         sides = prefs.getInt("sides", 0);
         sendAs = prefs.getInt("sendAs", 0);
@@ -144,9 +148,13 @@ public class MainActivity extends Activity {
             refresh();
         });
         vPaper = Ui.setting(this, oc, "Paper", v -> {
-            String[] names = new String[Paper.ALL.length];
-            for (int i = 0; i < names.length; i++) names[i] = Paper.ALL[i].label;
-            choose("Paper", names, w -> paper = Paper.ALL[w]);
+            String[] names = new String[Paper.ALL.length + 1];
+            names[0] = "Automatic (match each page of the file)";
+            for (int i = 0; i < Paper.ALL.length; i++) names[i + 1] = Paper.ALL[i].label;
+            choose("Paper", names, w -> {
+                autoPaper = w == 0;
+                if (w > 0) paper = Paper.ALL[w - 1];
+            });
         });
         vSides = Ui.setting(this, oc, "Sides", v -> choose("Sides", SIDES, w -> sides = w));
         vPages = Ui.setting(this, oc, "Pages", v -> askPages());
@@ -249,11 +257,12 @@ public class MainActivity extends Activity {
             fileInfo.setText("Choose a PDF or photos, or share a file to PrintDrop from another app.");
         } else {
             fileName.setText(docName);
-            fileInfo.setText(pageCount == 1 ? "1 page" : pageCount + " pages");
+            fileInfo.setText((pageCount == 1 ? "1 page" : pageCount + " pages")
+                    + (docSizes.isEmpty() ? "" : " · " + docSizes));
         }
         vCopies.setText(String.valueOf(copies));
         vColour.setText(colour ? "Colour" : "Black & white");
-        vPaper.setText(paper.label);
+        vPaper.setText(autoPaper ? "Automatic" : paper.label);
         vSides.setText(sides == 0 ? "One-sided" : sides == 1 ? "Two-sided (long edge)"
                 : "Two-sided (short edge)");
         vPages.setText(pageSpec.isEmpty() ? "All" : pageSpec);
@@ -264,7 +273,7 @@ public class MainActivity extends Activity {
 
     private void save() {
         prefs.edit().putString("printer", printer == null ? null : printer.save())
-                .putString("paper", paper.label).putBoolean("colour", colour)
+                .putString("paper", autoPaper ? "Auto" : paper.label).putBoolean("colour", colour)
                 .putInt("sides", sides).putInt("sendAs", sendAs).apply();
     }
 
@@ -419,12 +428,16 @@ public class MainActivity extends Activity {
             try {
                 File f = Pages.copyIn(this, u, "document.pdf");
                 int n;
+                String sz;
                 try (Pages.Doc d = new Pages.Doc(f)) {
                     n = d.count;
+                    sz = d.sizes();
                 }
                 final int count = n;
+                final String sizes = sz;
                 runOnUiThread(() -> {
                     pdf = f;
+                    docSizes = sizes;
                     photos = null;
                     docName = name;
                     pageCount = count;
@@ -441,6 +454,7 @@ public class MainActivity extends Activity {
     private void openPhotos(List<Uri> uris) {
         photos = new ArrayList<>(uris);
         pdf = null;
+        docSizes = "";
         pageCount = photos.size();
         docName = pageCount == 1 ? Ui.displayName(this, photos.get(0)) : pageCount + " photos";
         pageSpec = "";
@@ -520,6 +534,7 @@ public class MainActivity extends Activity {
         job.printer = printer;
         job.name = docName.isEmpty() ? "PrintDrop" : docName;
         job.paper = paper;
+        job.autoPaper = autoPaper && pdf != null;
         job.copies = copies;
         job.colour = colour;
         job.sides = sides;

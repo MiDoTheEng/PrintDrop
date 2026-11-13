@@ -27,6 +27,8 @@ final class PrintJob {
     List<Integer> pages = new ArrayList<>();
     String name = "PrintDrop";
     Paper paper = Paper.A4;
+    /** Pick the paper page by page from the size of each page in the file. */
+    boolean autoPaper;
     int copies = 1;
     boolean colour = true;
     /** 0 one-sided, 1 long edge, 2 short edge. */
@@ -48,33 +50,51 @@ final class PrintJob {
             List<Integer> list = new ArrayList<>();
             for (int i : pages) if (i >= 0 && i < doc.count) list.add(i);
             if (list.isEmpty()) throw new IOException("There are no pages to print.");
-            boolean whole = list.size() == doc.count;
-            for (int i = 0; whole && i < list.size(); i++) whole = list.get(i) == i;
-            int how = sendAs == AUTO ? choose(p, doc, list, whole) : sendAs;
-            if (!p.ipp() && (how == PWG || how == URF))
-                throw new IOException("This printer only takes PDF, JPEG or PCL. Change \"Send as\".");
-            switch (how) {
-                case PDF:
-                    sendPdf(p, list, whole, pr);
-                    return done("PDF");
-                case PWG:
-                    sendPwg(p, doc, list, pr);
-                    return done("PWG raster");
-                case URF:
-                    sendUrf(p, doc, list, pr);
-                    return done("Apple raster");
-                case JPEG:
-                    sendJpeg(p, doc, list, pr);
-                    return done("JPEG");
-                default:
-                    sendPcl(p, doc, list, pr);
-                    return done("PCL");
+            if (!autoPaper) return done(send(p, doc, list, pr), paper.label);
+            // Print each stretch of same-sized pages as its own job on the matching paper.
+            java.util.LinkedHashSet<String> used = new java.util.LinkedHashSet<>();
+            String how = "";
+            int i = 0;
+            while (i < list.size()) {
+                check();
+                Paper want = doc.paperFor(list.get(i));
+                List<Integer> part = new ArrayList<>();
+                while (i < list.size() && doc.paperFor(list.get(i)) == want) part.add(list.get(i++));
+                paper = want;
+                used.add(want.label);
+                how = send(p, doc, part, pr);
             }
+            return done(how, String.join(" and ", used));
         }
     }
 
-    private String done(String how) {
-        return "Sent to " + printer.title() + " as " + how + ". If nothing comes out, try another "
+    private String send(Printer p, Pages.Doc doc, List<Integer> list, Progress pr) throws IOException {
+        boolean whole = list.size() == doc.count;
+        for (int i = 0; whole && i < list.size(); i++) whole = list.get(i) == i;
+        int how = sendAs == AUTO ? choose(p, doc, list, whole) : sendAs;
+        if (!p.ipp() && (how == PWG || how == URF))
+            throw new IOException("This printer only takes PDF, JPEG or PCL. Change \"Send as\".");
+        switch (how) {
+            case PDF:
+                sendPdf(p, list, whole, pr);
+                return "PDF";
+            case PWG:
+                sendPwg(p, doc, list, pr);
+                return "PWG raster";
+            case URF:
+                sendUrf(p, doc, list, pr);
+                return "Apple raster";
+            case JPEG:
+                sendJpeg(p, doc, list, pr);
+                return "JPEG";
+            default:
+                sendPcl(p, doc, list, pr);
+                return "PCL";
+        }
+    }
+
+    private String done(String how, String papers) {
+        return "Sent to " + printer.title() + " as " + how + " on " + papers + ". If nothing comes out, try another "
                 + "\"Send as\" choice.";
     }
 
@@ -182,7 +202,7 @@ final class PrintJob {
             Raster.pwgStart(out);
             for (int i = 0; i < list.size(); i++) {
                 check();
-                pr.say("Printing page " + (i + 1) + " of " + list.size() + "…");
+                pr.say("Printing page " + (list.get(i) + 1) + " on " + paper.label + "…");
                 Bitmap b = doc.render(list.get(i), paper, dpi);
                 try {
                     Raster.pwgPage(out, Pages.rows(b), dpi, asColour, !colour, paper, list.size(), sides);
@@ -218,7 +238,7 @@ final class PrintJob {
             Raster.urfStart(out, list.size());
             for (int i = 0; i < list.size(); i++) {
                 check();
-                pr.say("Printing page " + (i + 1) + " of " + list.size() + "…");
+                pr.say("Printing page " + (list.get(i) + 1) + " on " + paper.label + "…");
                 Bitmap b = doc.render(list.get(i), paper, dpi);
                 try {
                     Raster.urfPage(out, Pages.rows(b), dpi, asColour, !colour, sides);
@@ -233,7 +253,7 @@ final class PrintJob {
         final int dpi = 300;
         for (int i = 0; i < list.size(); i++) {
             check();
-            pr.say("Printing page " + (i + 1) + " of " + list.size() + "…");
+            pr.say("Printing page " + (list.get(i) + 1) + " on " + paper.label + "…");
             Bitmap b = doc.render(list.get(i), paper, dpi);
             ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 << 20);
             try {
@@ -274,7 +294,7 @@ final class PrintJob {
             Raster.pclStart(out, paper, copies, sides);
             for (int i = 0; i < list.size(); i++) {
                 check();
-                pr.say("Printing page " + (i + 1) + " of " + list.size() + "…");
+                pr.say("Printing page " + (list.get(i) + 1) + " on " + paper.label + "…");
                 Bitmap b = doc.render(list.get(i), paper, Raster.PCL_DPI);
                 try {
                     Raster.pclPage(out, Pages.rows(b), !colour, paper);

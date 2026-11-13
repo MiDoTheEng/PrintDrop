@@ -140,6 +140,26 @@ final class Pages {
             count = renderer.getPageCount();
         }
 
+        /** The paper a page belongs on: its own size if that is a known one, else the smallest that holds it. */
+        Paper paperFor(int index) {
+            float w, h;
+            try (PdfRenderer.Page p = renderer.openPage(index)) {
+                w = Math.min(p.getWidth(), p.getHeight());
+                h = Math.max(p.getWidth(), p.getHeight());
+            }
+            for (Paper x : Paper.ALL)
+                if (Math.abs(w - x.wPt) <= 8 && Math.abs(h - x.hPt) <= 8) return x;
+            if (w <= Paper.A4.wPt + 8 && h <= Paper.A4.hPt + 8) return Paper.A4;
+            return Paper.A3;
+        }
+
+        /** "A4 and A3" - the papers this document's pages call for. */
+        String sizes() {
+            java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+            for (int i = 0; i < count && i < 500; i++) set.add(paperFor(i).label);
+            return String.join(" and ", set);
+        }
+
         /** True when every listed page is already the size of the paper (either way up). */
         boolean fits(List<Integer> pages, Paper paper) {
             for (int i : pages) {
