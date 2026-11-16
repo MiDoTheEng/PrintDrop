@@ -22,6 +22,8 @@ final class Ui {
     static final int ACCENT = 0xFF2EC4B6;
     static final int ON_ACCENT = 0xFF06231F;
     static final int BAD = 0xFFFF8A80;
+    static final int GOOD = 0xFF5FD38D;
+    static final int ON_GOOD = 0xFF06230F;
 
     private Ui() {}
 

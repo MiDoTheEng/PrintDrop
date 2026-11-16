@@ -35,6 +35,9 @@ final class PrintJob {
     int sides;
     int sendAs = AUTO;
     volatile boolean cancelled;
+    /** True once the printer itself has said every page came out. */
+    boolean confirmed;
+    private final List<Integer> jobIds = new ArrayList<>();
 
     /** Returns a sentence saying what happened. Blocks; run off the main thread. */
     String run(Progress pr) throws IOException {
@@ -50,7 +53,11 @@ final class PrintJob {
             List<Integer> list = new ArrayList<>();
             for (int i : pages) if (i >= 0 && i < doc.count) list.add(i);
             if (list.isEmpty()) throw new IOException("There are no pages to print.");
-            if (!autoPaper) return done(send(p, doc, list, pr), paper.label);
+            if (!autoPaper) {
+                String one = send(p, doc, list, pr);
+                confirmed = watch(p, pr);
+                return done(one, paper.label);
+            }
             // Print each stretch of same-sized pages as its own job on the matching paper.
             java.util.LinkedHashSet<String> used = new java.util.LinkedHashSet<>();
             String how = "";
@@ -64,6 +71,7 @@ final class PrintJob {
                 used.add(want.label);
                 how = send(p, doc, part, pr);
             }
+            confirmed = watch(p, pr);
             return done(how, String.join(" and ", used));
         }
     }
@@ -94,8 +102,104 @@ final class PrintJob {
     }
 
     private String done(String how, String papers) {
-        return "Sent to " + printer.title() + " as " + how + " on " + papers + ". If nothing comes out, try another "
-                + "\"Send as\" choice.";
+        if (confirmed)
+            return "\u2713 Printed successfully on " + printer.title() + " (" + papers + ").";
+        return "Sent to " + printer.title() + " as " + how + " on " + papers + ", but this printer "
+                + "does not report when a job finishes, so check the tray. If nothing comes out, "
+                + "try another \"Send as\" choice.";
+    }
+
+    /**
+     * Follows the jobs on the printer until each one is finished. Returns true when the printer
+     * confirmed them all, false when it cannot tell us. Throws when the printer gave up on one.
+     */
+    private boolean watch(Printer p, Progress pr) throws IOException {
+        if (!p.ipp() || jobIds.isEmpty()) return false;
+        long giveUp = System.currentTimeMillis() + 15 * 60 * 1000;
+        for (int n = 0; n < jobIds.size(); n++) {
+            int id = jobIds.get(n);
+            String part = jobIds.size() > 1 ? " (part " + (n + 1) + " of " + jobIds.size() + ")" : "";
+            boolean seen = false;
+            int misses = 0;
+            while (true) {
+                if (cancelled) {
+                    cancelOnPrinter(p);
+                    throw new IOException("Cancelled.");
+                }
+                if (System.currentTimeMillis() > giveUp) return false;
+                Ipp.Reply r;
+                try {
+                    Ipp.Req q = new Ipp.Req(0x0009, p);
+                    q.addInt(Ipp.T_INT, "job-id", id);
+                    q.add(Ipp.T_NAME, "requesting-user-name", "PrintDrop");
+                    q.add(Ipp.T_KEYWORD, "requested-attributes", "job-state");
+                    q.add(Ipp.T_KEYWORD, "", "job-state-reasons");
+                    r = Ipp.send(p, q.done(), null, 8000);
+                } catch (IOException e) {
+                    if (++misses > 5) return false;
+                    pause();
+                    continue;
+                }
+                misses = 0;
+                int state = 0;
+                for (Object o : r.all("job-state")) if (o instanceof Integer) state = (Integer) o;
+                if (!r.ok() || state == 0) {
+                    // Some printers forget a job the moment it is done.
+                    if (r.status == 0x0406 && seen) break;
+                    return false;
+                }
+                seen = true;
+                if (state == 9) break;
+                String why = reasons(r);
+                if (state == 7) throw new IOException("The job was cancelled at the printer.");
+                if (state == 8)
+                    throw new IOException("The printer gave up on the job" + (why.isEmpty() ? "." : ": " + why));
+                if (state == 5) pr.say("Printing" + part + "…");
+                else if (state == 6) pr.say("The printer has stopped" + (why.isEmpty() ? "" : ": " + why) + part);
+                else pr.say("Waiting in the printer's queue" + part + "…");
+                pause();
+            }
+        }
+        return true;
+    }
+
+    private static String reasons(Ipp.Reply r) {
+        StringBuilder s = new StringBuilder();
+        for (Object o : r.all("job-state-reasons")) {
+            if (!(o instanceof String)) continue;
+            String k = (String) o;
+            String say;
+            if (k.equals("none") || k.startsWith("job-") || k.startsWith("processing")) continue;
+            if (k.startsWith("media-needed") || k.startsWith("media-empty")) say = "it needs paper";
+            else if (k.startsWith("media-jam")) say = "paper jam";
+            else if (k.startsWith("toner-empty") || k.startsWith("marker-supply-empty")) say = "out of toner";
+            else if (k.startsWith("door-open") || k.startsWith("cover-open")) say = "a cover is open";
+            else if (k.startsWith("printer-stopped")) say = "the printer is stopped";
+            else say = k.replace('-', ' ');
+            if (s.length() > 0) s.append(", ");
+            s.append(say);
+        }
+        return s.toString();
+    }
+
+    private void cancelOnPrinter(Printer p) {
+        for (int id : jobIds) {
+            try {
+                Ipp.Req q = new Ipp.Req(0x0008, p);
+                q.addInt(Ipp.T_INT, "job-id", id);
+                q.add(Ipp.T_NAME, "requesting-user-name", "PrintDrop");
+                Ipp.send(p, q.done(), null, 5000);
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    private static void pause() {
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private int choose(Printer p, Pages.Doc doc, List<Integer> list, boolean whole) {
@@ -133,6 +237,7 @@ final class PrintJob {
     private void submit(Printer p, Ipp.Req q, Ipp.Body body) throws IOException {
         Ipp.Reply r = Ipp.send(p, q.done(), body, 180000);
         if (!r.ok()) throw new IOException(r.problem());
+        for (Object o : r.all("job-id")) if (o instanceof Integer) jobIds.add((Integer) o);
     }
 
     private String type(Printer p, String wanted) {

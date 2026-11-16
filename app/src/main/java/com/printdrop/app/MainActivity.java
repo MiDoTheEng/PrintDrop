@@ -171,7 +171,11 @@ public class MainActivity extends Activity {
 
         status = Ui.label(this, "", 14, Ui.DIM);
         status.setPadding(Ui.dp(this, 4), Ui.dp(this, 12), Ui.dp(this, 4), Ui.dp(this, 24));
-        column.addView(status);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sp.topMargin = Ui.dp(this, 10);
+        sp.bottomMargin = Ui.dp(this, 20);
+        column.addView(status, sp);
     }
 
     /** Keeps the content a comfortable width on a tablet. */
@@ -279,7 +283,25 @@ public class MainActivity extends Activity {
 
     private void say(String s, boolean bad) {
         status.setTextColor(bad ? Ui.BAD : Ui.DIM);
+        status.setTextSize(14);
+        status.setTypeface(Typeface.DEFAULT);
+        status.setBackground(null);
+        status.setPadding(Ui.dp(this, 4), Ui.dp(this, 12), Ui.dp(this, 4), Ui.dp(this, 24));
         status.setText(s);
+    }
+
+    /** A clear green banner for a job the printer confirmed. */
+    private void sayDone(String s) {
+        status.setTextColor(Ui.ON_GOOD);
+        status.setTextSize(17);
+        status.setTypeface(Typeface.DEFAULT_BOLD);
+        status.setBackground(Ui.round(Ui.GOOD, Ui.dp(this, 14)));
+        int p = Ui.dp(this, 16);
+        status.setPadding(p, p, p, p);
+        status.setText(s);
+        android.widget.Toast.makeText(this, "Printed successfully", android.widget.Toast.LENGTH_LONG).show();
+        status.post(() -> status.requestRectangleOnScreen(
+                new android.graphics.Rect(0, 0, status.getWidth(), status.getHeight()), false));
     }
 
     // ------------------------------------------------------------------ printer
@@ -563,7 +585,8 @@ public class MainActivity extends Activity {
                 running = null;
                 save();
                 refresh();
-                say(text, failed);
+                if (!failed && job.confirmed) sayDone(text);
+                else say(text, failed);
             });
         });
     }
