@@ -13,9 +13,10 @@ import java.util.List;
 
 /** Decides how to send a document to a printer, and sends it. */
 final class PrintJob {
-    static final int AUTO = 0, PDF = 1, PWG = 2, URF = 3, JPEG = 4, PCL = 5;
+    static final int AUTO = 0, PDF = 1, PWG = 2, URF = 3, JPEG = 4, PCL = 5, LPR_JPEG = 6, LPR_PDF = 7;
     static final String[] SEND_AS = {"Automatic", "PDF as it is", "PWG raster (Mopria)",
-            "Apple raster (AirPrint)", "JPEG, page by page", "PCL"};
+            "Apple raster (AirPrint)", "JPEG, page by page", "PCL",
+            "JPEG via LPR (Canon direct print)", "PDF via LPR"};
 
     interface Progress {
         void say(String s);
@@ -38,24 +39,33 @@ final class PrintJob {
     /** True once the printer itself has said every page came out. */
     boolean confirmed;
     private final List<Integer> jobIds = new ArrayList<>();
+    /** Sheets sent, counted the way the printer's page counter counts them. */
+    private int expected;
+    /** The printer's page counter before we sent anything; -1 when it has none. */
+    private long counterBefore = -1;
+    /** How the last part was sent, for the result message. */
+    private String route = "";
+    private String format = "";
 
     /** Returns a sentence saying what happened. Blocks; run off the main thread. */
     String run(Progress pr) throws IOException {
         Printer p = printer;
-        if (!p.probed || (!p.ipp() && p.rawPort == 0)) {
+        if (!p.probed || !p.reachable()) {
             pr.say("Checking the printer…");
             Ipp.probe(p);
         }
-        if (!p.ipp() && p.rawPort == 0)
+        if (!p.reachable())
             throw new IOException("The printer at " + p.host + " is not answering. "
                     + "Check that this device is on the same Wi-Fi as the printer.");
         try (Pages.Doc doc = new Pages.Doc(pdf)) {
             List<Integer> list = new ArrayList<>();
             for (int i : pages) if (i >= 0 && i < doc.count) list.add(i);
             if (list.isEmpty()) throw new IOException("There are no pages to print.");
+            counterBefore = Snmp.pages(p.host);
             if (!autoPaper) {
                 String one = send(p, doc, list, pr);
-                confirmed = watch(p, pr);
+                format = one;
+                confirmed = watch(p, pr) || counted(p, pr);
                 return done(one, paper.label);
             }
             // Print each stretch of same-sized pages as its own job on the matching paper.
@@ -71,7 +81,8 @@ final class PrintJob {
                 used.add(want.label);
                 how = send(p, doc, part, pr);
             }
-            confirmed = watch(p, pr);
+            format = how;
+            confirmed = watch(p, pr) || counted(p, pr);
             return done(how, String.join(" and ", used));
         }
     }
@@ -81,8 +92,22 @@ final class PrintJob {
         for (int i = 0; whole && i < list.size(); i++) whole = list.get(i) == i;
         int how = sendAs == AUTO ? choose(p, doc, list, whole) : sendAs;
         if (!p.ipp() && (how == PWG || how == URF))
-            throw new IOException("This printer only takes PDF, JPEG or PCL. Change \"Send as\".");
+            throw new IOException("This printer does not answer IPP, so it can't take "
+                    + SEND_AS[how] + ". Change \"Send as\".");
+        if ((how == LPR_JPEG || how == LPR_PDF) && p.lpdPort == 0)
+            throw new IOException("This printer's LPR port (515) is closed. Change \"Send as\".");
+        if (!p.ipp() && p.rawPort == 0 && how != LPR_JPEG && how != LPR_PDF)
+            how = how == PDF ? LPR_PDF : LPR_JPEG;
+        expected += list.size() * Math.max(1, copies);
+        route = p.ipp() && how != LPR_JPEG && how != LPR_PDF ? "IPP"
+                : how == LPR_JPEG || how == LPR_PDF ? "LPR" : "raw port " + p.rawPort;
         switch (how) {
+            case LPR_JPEG:
+                sendLprJpeg(p, doc, list, pr);
+                return "JPEG";
+            case LPR_PDF:
+                sendLprPdf(p, pr);
+                return "PDF";
             case PDF:
                 sendPdf(p, list, whole, pr);
                 return "PDF";
@@ -104,9 +129,47 @@ final class PrintJob {
     private String done(String how, String papers) {
         if (confirmed)
             return "\u2713 Printed successfully on " + printer.title() + " (" + papers + ").";
-        return "Sent to " + printer.title() + " as " + how + " on " + papers + ", but this printer "
-                + "does not report when a job finishes, so check the tray. If nothing comes out, "
-                + "try another \"Send as\" choice.";
+        return "Sent to " + printer.title() + " as " + how + " over " + route + " on " + papers
+                + ", but the printer could not confirm it printed. Check the tray. If nothing "
+                + "came out, try another \"Send as\" choice.";
+    }
+
+    /**
+     * Watches the printer's page counter. Returns true once it has gone up by every page sent,
+     * false when the printer has no counter we can read. Throws when nothing came out.
+     */
+    private boolean counted(Printer p, Progress pr) throws IOException {
+        if (counterBefore < 0 || expected <= 0) return false;
+        long start = System.currentTimeMillis();
+        long lastChange = start;
+        long last = counterBefore;
+        pr.say("Sent. Waiting for the printer to start…");
+        while (true) {
+            if (cancelled) throw new IOException("Cancelled. Pages already sent may still print.");
+            pause();
+            long now = Snmp.pages(p.host);
+            if (now < 0) continue;
+            if (now != last) {
+                last = now;
+                lastChange = System.currentTimeMillis();
+            }
+            long done = Math.max(0, last - counterBefore);
+            if (done >= expected) return true;
+            long quiet = System.currentTimeMillis() - lastChange;
+            if (done == 0) {
+                pr.say("Sent. Waiting for the printer to start…");
+                if (quiet > 150000)
+                    throw new IOException("Nothing came out. The printer took the job (" + format
+                            + " over " + route + ") but did not print it, so it probably can't read "
+                            + "that format. Change \"Send as\" and try again"
+                            + (p.lpdPort > 0 ? " (on Canon, try \"JPEG via LPR\")." : "."));
+            } else {
+                pr.say("Printing… " + done + " of " + expected + " pages out");
+                if (quiet > 90000)
+                    throw new IOException("Only " + done + " of " + expected + " pages came out. "
+                            + "Check the printer's screen for paper or a jam.");
+            }
+        }
     }
 
     /**
@@ -203,7 +266,7 @@ final class PrintJob {
     }
 
     private int choose(Printer p, Pages.Doc doc, List<Integer> list, boolean whole) {
-        if (!p.ipp()) return PCL;
+        if (!p.ipp()) return p.lpdPort > 0 ? LPR_JPEG : PCL;
         boolean pdf = p.has("application/pdf");
         boolean pwg = p.has("image/pwg-raster");
         boolean urf = p.has("image/urf");
@@ -212,6 +275,7 @@ final class PrintJob {
         if (urf) return URF;
         if (pdf && (whole || p.pageRanges)) return PDF;
         if (p.has("image/jpeg")) return JPEG;
+        if (p.lpdPort > 0) return LPR_JPEG;
         return PCL;
     }
 
@@ -390,6 +454,40 @@ final class PrintJob {
                 row[x] = 0xFF000000 | (g << 16) | (g << 8) | g;
             }
             b.setPixels(row, 0, w, 0, y, w, 1);
+        }
+    }
+
+    private void sendLprPdf(Printer p, Progress pr) throws IOException {
+        pr.say("Sending the PDF…");
+        Lpr.send(p, name, pdf.length(), out -> {
+            try (InputStream in = new FileInputStream(pdf)) {
+                byte[] b = new byte[65536];
+                int n;
+                while ((n = in.read(b)) > 0) {
+                    check();
+                    out.write(b, 0, n);
+                }
+            }
+        }, copies);
+    }
+
+    /** Canon direct print: each page as a JPEG of the paper's exact size, one LPR job per page. */
+    private void sendLprJpeg(Printer p, Pages.Doc doc, List<Integer> list, Progress pr) throws IOException {
+        final int dpi = 300;
+        for (int i = 0; i < list.size(); i++) {
+            check();
+            pr.say("Sending page " + (list.get(i) + 1) + " on " + paper.label + "…");
+            Bitmap b = doc.render(list.get(i), paper, dpi);
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 << 20);
+            try {
+                if (!colour) grey(b);
+                b.compress(Bitmap.CompressFormat.JPEG, 92, bytes);
+            } finally {
+                b.recycle();
+            }
+            final byte[] jpeg = bytes.toByteArray();
+            Raster.jpegDensity(jpeg, dpi);
+            Lpr.send(p, name + " p" + (list.get(i) + 1), jpeg.length, out -> out.write(jpeg), copies);
         }
     }
 

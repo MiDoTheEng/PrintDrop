@@ -117,6 +117,8 @@ public class MainActivity extends Activity {
         printerInfo = Ui.label(this, "", 13, Ui.DIM);
         printerInfo.setPadding(0, Ui.dp(this, 2), 0, Ui.dp(this, 12));
         pc.addView(printerInfo);
+        printerName.setOnClickListener(v -> details());
+        printerInfo.setOnClickListener(v -> details());
         TextView find = Ui.button(this, "Find printers", false);
         find.setOnClickListener(v -> findPrinters());
         TextView ip = Ui.button(this, "Enter address", false);
@@ -321,6 +323,44 @@ public class MainActivity extends Activity {
                     save();
                     refresh();
                 }
+            });
+        });
+    }
+
+    /** What the printer told us, so a failed print can be worked out. */
+    private void details() {
+        if (printer == null) return;
+        final Printer p = printer;
+        final AlertDialog d = new AlertDialog.Builder(this).setTitle(p.title())
+                .setMessage("Checking the printer…").setPositiveButton("Close", null).create();
+        d.show();
+        work.execute(() -> {
+            Ipp.probe(p);
+            long count = Snmp.pages(p.host);
+            StringBuilder s = new StringBuilder();
+            s.append("Address: ").append(p.host).append("\n\n");
+            s.append("IPP: ").append(p.ipp() ? "yes (port " + p.ippPort + p.ippPath + ")"
+                    : "no").append('\n');
+            s.append("LPR (515): ").append(p.lpdPort > 0 ? "open" : "closed").append('\n');
+            s.append("Raw (9100): ").append(p.rawPort > 0 ? "open" : "closed").append('\n');
+            s.append("Page counter: ").append(count >= 0 ? String.valueOf(count) : "not available")
+                    .append("\n\n");
+            if (p.ipp()) {
+                s.append("Formats it accepts over IPP:\n");
+                if (p.formats.isEmpty()) s.append("  (none listed)\n");
+                for (String fmt : new java.util.TreeSet<>(p.formats)) s.append("  ").append(fmt).append('\n');
+                s.append("Page ranges: ").append(p.pageRanges ? "yes" : "no").append('\n');
+            } else {
+                s.append("This printer does not answer IPP, so PrintDrop sends to it over ")
+                        .append(p.lpdPort > 0 ? "LPR" : "the raw port").append(".\n");
+            }
+            s.append("\nSend as is set to: ").append(PrintJob.SEND_AS[sendAs]);
+            runOnUiThread(() -> {
+                if (printer == p) {
+                    save();
+                    refresh();
+                }
+                if (d.isShowing()) d.setMessage(s.toString());
             });
         });
     }

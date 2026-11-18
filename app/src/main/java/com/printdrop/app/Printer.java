@@ -14,6 +14,8 @@ final class Printer {
     String ippPath = "/ipp/print";
     /** Raw (port 9100) printing; 0 when closed. */
     int rawPort;
+    /** LPR (port 515) printing; 0 when closed. */
+    int lpdPort;
 
     // Filled in by Ipp.probe()
     boolean probed;
@@ -27,6 +29,10 @@ final class Printer {
 
     boolean ipp() {
         return ippPort > 0;
+    }
+
+    boolean reachable() {
+        return ipp() || rawPort > 0 || lpdPort > 0;
     }
 
     boolean has(String format) {
@@ -43,9 +49,14 @@ final class Printer {
     /** One line saying how the app will talk to this printer. */
     String summary() {
         if (!probed) return host + " · checking…";
-        if (!ipp() && rawPort == 0) return host + " · not answering";
+        if (!reachable()) return host + " · not answering";
         StringBuilder s = new StringBuilder(host).append(" · ");
-        if (!ipp()) return s.append("raw port ").append(rawPort).toString();
+        if (!ipp()) {
+            List<String> ways = new ArrayList<>();
+            if (lpdPort > 0) ways.add("LPR");
+            if (rawPort > 0) ways.add("raw port " + rawPort);
+            return s.append(String.join(", ", ways)).append(" · tap for details").toString();
+        }
         s.append("IPP");
         List<String> f = new ArrayList<>();
         if (has("application/pdf")) f.add("PDF");
@@ -54,7 +65,8 @@ final class Printer {
         if (has("image/jpeg")) f.add("JPEG");
         if (has("application/vnd.hp-PCL")) f.add("PCL");
         if (!f.isEmpty()) s.append(" · ").append(String.join(", ", f));
-        return s.toString();
+        if (lpdPort > 0) s.append(" · LPR");
+        return s.append(" · tap for details").toString();
     }
 
     void clearCaps() {
@@ -70,7 +82,7 @@ final class Printer {
     }
 
     String save() {
-        return title().replace('|', ' ') + "|" + host + "|" + ippPort + "|" + ippPath + "|" + rawPort;
+        return title().replace('|', ' ') + "|" + host + "|" + ippPort + "|" + ippPath + "|" + rawPort + "|" + lpdPort;
     }
 
     static Printer load(String s) {
@@ -84,6 +96,7 @@ final class Printer {
             r.ippPort = Integer.parseInt(p[2]);
             r.ippPath = p[3];
             r.rawPort = Integer.parseInt(p[4]);
+            if (p.length > 5) r.lpdPort = Integer.parseInt(p[5]);
             return r;
         } catch (NumberFormatException e) {
             return null;

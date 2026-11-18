@@ -183,12 +183,12 @@ final class Finder {
             final String host = prefix + n;
             pool.execute(() -> {
                 boolean ipp = Ipp.open(host, 631, 400);
-                boolean raw = !ipp && Ipp.open(host, 9100, 400);
+                boolean raw = !ipp && (Ipp.open(host, 9100, 400) || Ipp.open(host, 515, 400));
                 if (!ipp && !raw) return;
                 final Printer p = new Printer();
                 p.host = host;
                 Ipp.probe(p);
-                if (!p.ipp() && p.rawPort == 0) return;
+                if (!p.reachable()) return;
                 main.post(() -> {
                     Printer old = found.get(host);
                     if (old != null) {
